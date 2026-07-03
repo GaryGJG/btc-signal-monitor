@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BTC 多空信号监控</title>
+<style>
+:root{
+  --surface:#fcfcfb; --page:#f9f9f7;
+  --ink:#0b0b0b; --ink-2:#52514e; --muted:#898781;
+  --grid:#e1e0d9; --axis:#c3c2b7; --ring:rgba(11,11,11,.10);
+  --pos:#2a78d6; --neg:#e34948; --mid:#f0efec;
+  --good:#0ca30c; --good-text:#006300; --critical:#d03b3b; --warning:#fab219;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --surface:#1a1a19; --page:#0d0d0d;
+    --ink:#ffffff; --ink-2:#c3c2b7; --muted:#898781;
+    --grid:#2c2c2a; --axis:#383835; --ring:rgba(255,255,255,.10);
+    --pos:#3987e5; --neg:#e66767; --mid:#383835;
+    --good:#0ca30c; --good-text:#0ca30c; --critical:#d03b3b;
+  }
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--page);color:var(--ink);padding:20px;line-height:1.45}
+.wrap{max-width:1080px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+.card{background:var(--surface);border:1px solid var(--ring);border-radius:10px;padding:16px}
+header.card{display:flex;flex-wrap:wrap;align-items:center;gap:18px}
+.hero-price{font-size:34px;font-weight:700}
+.hero-sub{color:var(--ink-2);font-size:13px}
+.badge{font-size:15px;font-weight:700;padding:6px 14px;border-radius:8px;color:#fff}
+.badge.up{background:var(--good)} .badge.down{background:var(--critical)} .badge.na{background:var(--muted)}
+.updated{margin-left:auto;color:var(--muted);font-size:12px}
+h2{font-size:14px;color:var(--ink-2);font-weight:600;margin-bottom:10px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px}
+.tile{background:var(--surface);border:1px solid var(--ring);border-radius:10px;padding:12px 14px}
+.tile .k{font-size:12px;color:var(--muted)}
+.tile .v{font-size:20px;font-weight:700;margin-top:2px}
+.tile .d{font-size:12px;color:var(--ink-2);margin-top:2px}
+.v.pos{color:var(--good-text)} .v.neg{color:var(--critical)}
+.chart-box{overflow-x:auto}
+.legend{display:flex;gap:14px;font-size:12px;color:var(--ink-2);margin-bottom:6px}
+.legend .sw{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:4px;vertical-align:-1px}
+.senti-bar{display:flex;height:22px;border-radius:6px;overflow:hidden;gap:2px;background:var(--page)}
+.senti-bar div{height:100%}
+.senti-labels{display:flex;justify-content:space-between;font-size:12px;color:var(--ink-2);margin-top:6px}
+.levels{display:flex;flex-direction:column;gap:4px;font-size:13px}
+.level{display:flex;align-items:center;gap:8px;padding:4px 8px;border-radius:6px}
+.level .tag{font-size:11px;padding:1px 8px;border-radius:4px;color:#fff}
+.level.res .tag{background:var(--neg)} .level.sup .tag{background:var(--pos)}
+.level.now{border:1px dashed var(--axis);color:var(--ink-2)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;color:var(--muted);font-weight:500;padding:6px 8px;border-bottom:1px solid var(--grid)}
+td{padding:6px 8px;border-bottom:1px solid var(--grid);vertical-align:top}
+td.time{white-space:nowrap;color:var(--ink-2);font-variant-numeric:tabular-nums}
+.dir{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
+.dir.bullish{background:var(--good)} .dir.bearish{background:var(--critical)} .dir.neutral{background:var(--warning)}
+.sig-title{font-weight:600}
+.sig-body{color:var(--ink-2);font-size:12px;margin-top:2px}
+.empty{color:var(--muted);font-size:13px;padding:12px 0;text-align:center}
+#tooltip{position:fixed;pointer-events:none;background:var(--surface);border:1px solid var(--ring);border-radius:8px;padding:8px 10px;font-size:12px;box-shadow:0 4px 14px rgba(0,0,0,.15);display:none;z-index:9}
+.vote-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.vote{font-size:12px;padding:2px 10px;border-radius:12px;border:1px solid var(--ring);color:var(--ink-2)}
+.vote.on{border-color:var(--good);color:var(--good-text)}
+footer{color:var(--muted);font-size:12px;text-align:center;padding:6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="card">
+    <div>
+      <div class="hero-price" id="price">—</div>
+      <div class="hero-sub">BTC/USDT · <span id="chg24">—</span> (24H)</div>
+    </div>
+    <div>
+      <div class="badge na" id="trend">加载中</div>
+      <div class="hero-sub" style="margin-top:4px">主力行为指标 · 投票 <span id="score">—</span>/6</div>
+    </div>
+    <div class="updated">更新于 <span id="updated">—</span> · 30s 自动刷新</div>
+  </header>
+
+  <section class="card">
+    <h2>主力行为分量（看多票）</h2>
+    <div class="vote-row" id="votes"></div>
+  </section>
+
+  <section class="tiles" id="tiles"></section>
+
+  <section class="card">
+    <h2>逐小时资金净流入（现货+合约 taker 买卖差，近 3 天）</h2>
+    <div class="legend">
+      <span><span class="sw" style="background:var(--pos)"></span>净流入</span>
+      <span><span class="sw" style="background:var(--neg)"></span>净流出</span>
+    </div>
+    <div class="chart-box"><svg id="flowchart" width="1020" height="180"></svg></div>
+  </section>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px" id="two-col">
+    <section class="card">
+      <h2>市场情绪（恐惧贪婪指数 + 合约多空人数比）</h2>
+      <div class="senti-bar" id="senti"></div>
+      <div class="senti-labels"><span id="s-bull">看涨 —</span><span id="s-neu">中性 —</span><span id="s-bear">看跌 —</span></div>
+      <div class="hero-sub" style="margin-top:10px" id="fng">恐惧贪婪指数：—</div>
+    </section>
+    <section class="card">
+      <h2>压力 / 支撑位（7 天成交量密集区）</h2>
+      <div class="levels" id="levels"></div>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2>信号流（同步推送 Telegram）</h2>
+    <table>
+      <thead><tr><th style="width:110px">时间</th><th style="width:110px">类型</th><th>内容</th></tr></thead>
+      <tbody id="signals"></tbody>
+    </table>
+    <div class="empty" id="sig-empty" style="display:none">暂无信号，等待触发…</div>
+  </section>
+
+  <footer>数据源：Binance 现货/合约公开行情 · alternative.me 恐惧贪婪指数 · 信号逻辑参照 valuescan.io</footer>
+</div>
+<div id="tooltip"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const fmtUsd = v => {
+  const a = Math.abs(v), s = v < 0 ? "-$" : "$";
+  if (a >= 1e9) return s + (a/1e9).toFixed(2) + "B";
+  if (a >= 1e6) return s + (a/1e6).toFixed(1) + "M";
+  return s + (a/1e3).toFixed(0) + "K";
+};
+const fmtTime = ts => new Date(ts*1000).toLocaleString("zh-CN",{hour12:false,month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"});
+const VOTE_NAMES = {spot_flow:"现货资金流", futures_flow:"合约资金流", whale_flow:"大单净流入",
+                    top_trader:"大户持仓比", above_cost:"价格>主力成本", momentum:"4H动量"};
+
+function tile(k, v, cls, d){
+  return `<div class="tile"><div class="k">${k}</div><div class="v ${cls||""}">${v}</div>${d?`<div class="d">${d}</div>`:""}</div>`;
+}
+
+function render(st){
+  if (!st.ready) return;
+  $("price").textContent = "$" + st.price.toLocaleString("en-US",{maximumFractionDigits:0});
+  const c = st.price_change_24h;
+  $("chg24").textContent = (c>=0?"+":"") + c.toFixed(2) + "%";
+  $("chg24").style.color = c>=0 ? "var(--good-text)" : "var(--critical)";
+  $("updated").textContent = fmtTime(st.updated);
+
+  const pm = st.price_market;
+  const badge = $("trend");
+  badge.textContent = pm.type === 1 ? "多头 · 上涨" : "空头 · 下跌";
+  badge.className = "badge " + (pm.type === 1 ? "up" : "down");
+  $("score").textContent = pm.score;
+  $("votes").innerHTML = Object.entries(pm.votes).map(([k,v]) =>
+    `<span class="vote ${v?"on":""}">${v?"✓":"✗"} ${VOTE_NAMES[k]||k}</span>`).join("");
+
+  const w = st.whale, sf = st.spot_netflow, ff = st.futures_netflow;
+  const dev = w.cost ? ((st.price - w.cost)/w.cost*100) : null;
+  $("tiles").innerHTML =
+    tile("现货净流入 1H", fmtUsd(sf["1h"]), sf["1h"]>=0?"pos":"neg") +
+    tile("现货净流入 24H", fmtUsd(sf["24h"]), sf["24h"]>=0?"pos":"neg") +
+    tile("合约净流入 24H", fmtUsd(ff["24h"]), ff["24h"]>=0?"pos":"neg") +
+    tile("大单净流入 24H", fmtUsd(w.netflow_24h), w.netflow_24h>=0?"pos":"neg",
+         `样本 ${w.trade_count} 笔 ≥ $${(st.large_trade_usd/1000).toFixed(0)}K`) +
+    tile("主力成本", w.cost ? "$"+w.cost.toLocaleString("en-US",{maximumFractionDigits:0}) : "积累中",
+         null, dev===null?"":"偏离 "+(dev>=0?"+":"")+dev.toFixed(1)+"%") +
+    tile("大户持仓多空比", st.top_trader_ratio!=null ? st.top_trader_ratio.toFixed(2) : "—",
+         st.top_trader_ratio>=1?"pos":"neg", "币安合约 Top Trader") +
+    tile("资金费率", st.funding_rate!=null ? (st.funding_rate*100).toFixed(4)+"%" : "—",
+         st.funding_rate>=0?"pos":"neg") +
+    tile("持仓量变化 24H", st.oi_change_24h!=null ? (st.oi_change_24h>=0?"+":"")+st.oi_change_24h.toFixed(1)+"%" : "—",
+         st.oi_change_24h>=0?"pos":"neg", "合约未平仓价值");
+
+  if (st.sentiment){
+    const s = st.sentiment;
+    $("senti").innerHTML =
+      `<div style="width:${s.bullish*100}%;background:var(--pos)"></div>` +
+      `<div style="width:${s.neutral*100}%;background:var(--mid)"></div>` +
+      `<div style="width:${s.bearish*100}%;background:var(--neg)"></div>`;
+    $("s-bull").textContent = "看涨 " + (s.bullish*100).toFixed(0) + "%";
+    $("s-neu").textContent  = "中性 " + (s.neutral*100).toFixed(0) + "%";
+    $("s-bear").textContent = "看跌 " + (s.bearish*100).toFixed(0) + "%";
+  }
+  if (st.fear_greed) $("fng").textContent =
+    `恐惧贪婪指数：${st.fear_greed.value}（${st.fear_greed.label}）`;
+
+  const lv = st.dense_areas || [];
+  $("levels").innerHTML = lv.filter(l=>l.dense_area===1).map(l=>
+      `<div class="level res"><span class="tag">压力</span>$${l.price.toLocaleString()}</div>`).join("") +
+    `<div class="level now">— 现价 $${st.price.toLocaleString("en-US",{maximumFractionDigits:0})} —</div>` +
+    lv.filter(l=>l.dense_area===2).map(l=>
+      `<div class="level sup"><span class="tag">支撑</span>$${l.price.toLocaleString()}</div>`).join("");
+
+  drawFlow(st.hourly_series || []);
+
+  const sigs = st.signals || [];
+  $("sig-empty").style.display = sigs.length ? "none" : "block";
+  $("signals").innerHTML = sigs.map(s =>
+    `<tr><td class="time">${fmtTime(s.ts)}</td>` +
+    `<td><span class="dir ${s.direction}"></span>${s.name}</td>` +
+    `<td><div class="sig-title">${s.title}</div><div class="sig-body">${s.content}</div></td></tr>`).join("");
+}
+
+function drawFlow(series){
+  const svg = $("flowchart");
+  svg.innerHTML = "";
+  if (!series.length) return;
+  const W = Math.max(svg.clientWidth || 1020, series.length*6), H = 180, padL = 56, padB = 18, padT = 8;
+  svg.setAttribute("width", W);
+  const plotW = W - padL - 8, plotH = H - padT - padB;
+  const maxAbs = Math.max(...series.map(d => Math.abs(d.v)), 1);
+  const zeroY = padT + plotH/2;
+  const bw = Math.max(2, plotW/series.length - 2);
+  const ns = "http://www.w3.org/2000/svg";
+  const mk = (tag, attrs) => { const el = document.createElementNS(ns, tag);
+    for (const k in attrs) el.setAttribute(k, attrs[k]); svg.appendChild(el); return el; };
+
+  mk("line",{x1:padL,x2:W-8,y1:zeroY,y2:zeroY,stroke:"var(--axis)","stroke-width":1});
+  [maxAbs,-maxAbs].forEach(v=>{
+    const y = zeroY - (v/maxAbs)*(plotH/2-4);
+    const t = mk("text",{x:padL-6,y:y+4,"text-anchor":"end",fill:"var(--muted)","font-size":10});
+    t.textContent = fmtUsd(v);
+  });
+  const tooltip = $("tooltip");
+  series.forEach((d,i)=>{
+    const h = Math.abs(d.v)/maxAbs*(plotH/2-4);
+    const x = padL + i*(plotW/series.length);
+    const y = d.v >= 0 ? zeroY - h : zeroY;
+    const bar = mk("rect",{x, y, width:bw, height:Math.max(h,1), rx:2,
+      fill: d.v >= 0 ? "var(--pos)" : "var(--neg)"});
+    const hit = mk("rect",{x:x-1, y:padT, width:bw+2, height:plotH, fill:"transparent"});
+    hit.addEventListener("mousemove", ev => {
+      tooltip.style.display = "block";
+      tooltip.style.left = (ev.clientX+12)+"px";
+      tooltip.style.top = (ev.clientY-10)+"px";
+      tooltip.innerHTML = `<b>${fmtTime(d.ts)}</b><br>净流入 ${fmtUsd(d.v)}`;
+      bar.setAttribute("opacity","0.75");
+    });
+    hit.addEventListener("mouseleave", () => { tooltip.style.display="none"; bar.removeAttribute("opacity"); });
+  });
+}
+
+async function refresh(){
+  try{
+    // 相对路径：兼容反向代理子路径（如 /proxy/8600/）
+    const st = await (await fetch("api/status")).json();
+    render(st);
+  }catch(e){ console.error(e); }
+}
+refresh();
+setInterval(refresh, 30000);
+if (matchMedia("(max-width:760px)").matches) $("two-col").style.gridTemplateColumns = "1fr";
+</script>
+</body>
+</html>
