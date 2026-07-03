@@ -76,13 +76,21 @@ class SignalEngine:
         db.kv_set("last_trend", pm["type"])
         if first:
             return []
+        # 附上一周期的有效性回顾
+        review = ""
+        history = (snap.get("trend_stats") or {}).get("history") or []
+        if history:
+            p = history[0]
+            review = (f" 上一{'多头' if p['trend'] == 1 else '空头'}周期持续 "
+                      f"{p['duration_h']:.1f} 小时，期间价格变化 {p['change_pct']:+.2f}%"
+                      f"（{'方向正确' if p.get('hit') else '方向错误'}）。")
         if pm["type"] == 1:
             return [self._sig("TREND", "主力行为指标", UP,
                               "BTC 主力行为指标转为【上涨】",
-                              f"多维主力行为投票 {pm['score']}/6 看多，{base}。")]
+                              f"多维主力行为投票 {pm['score']}/6 看多，{base}。{review}")]
         return [self._sig("TREND", "主力行为指标", DOWN,
                           "BTC 主力行为指标转为【下跌】",
-                          f"多维主力行为投票仅 {pm['score']}/6 看多，{base}，注意市场风险。")]
+                          f"多维主力行为投票仅 {pm['score']}/6 看多，{base}，注意市场风险。{review}")]
 
     def _fomo(self, snap, base):
         """113 FOMO：量价同时达到阈值；112 FOMO加剧：过热止盈预警。"""

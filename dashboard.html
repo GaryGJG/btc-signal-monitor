@@ -95,6 +95,24 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:6px}
     <div class="chart-box"><svg id="flowchart" width="1020" height="180"></svg></div>
   </section>
 
+  <section class="card">
+    <h2>多空指标有效性（自指标翻转起，每小时统计一次价格变化幅度）</h2>
+    <div class="tiles" id="eff-tiles" style="margin-bottom:12px"></div>
+    <div class="legend" id="eff-legend" style="display:none">
+      <span><span class="sw" style="background:var(--pos)"></span>顺指标方向</span>
+      <span><span class="sw" style="background:var(--neg)"></span>逆指标方向</span>
+    </div>
+    <div class="chart-box"><svg id="effchart" width="1020" height="140" style="display:none"></svg></div>
+    <div class="empty" id="eff-empty" style="display:none">当前周期尚未满 1 小时，等待首个小时快照…</div>
+    <div style="margin-top:12px">
+      <table>
+        <thead><tr><th>周期开始</th><th>方向</th><th>持续</th><th>期间涨跌</th><th>最大顺向</th><th>最大逆向</th><th>命中</th></tr></thead>
+        <tbody id="eff-history"></tbody>
+      </table>
+      <div class="empty" id="eff-hist-empty" style="display:none">暂无已结束的周期</div>
+    </div>
+  </section>
+
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px" id="two-col">
     <section class="card">
       <h2>市场情绪（恐惧贪婪指数 + 合约多空人数比）</h2>
@@ -191,6 +209,7 @@ function render(st){
       `<div class="level sup"><span class="tag">支撑</span>$${l.price.toLocaleString()}</div>`).join("");
 
   drawFlow(st.hourly_series || []);
+  renderEffectiveness(st.trend_stats);
 
   const sigs = st.signals || [];
   $("sig-empty").style.display = sigs.length ? "none" : "block";
@@ -233,6 +252,91 @@ function drawFlow(series){
       tooltip.style.left = (ev.clientX+12)+"px";
       tooltip.style.top = (ev.clientY-10)+"px";
       tooltip.innerHTML = `<b>${fmtTime(d.ts)}</b><br>净流入 ${fmtUsd(d.v)}`;
+      bar.setAttribute("opacity","0.75");
+    });
+    hit.addEventListener("mouseleave", () => { tooltip.style.display="none"; bar.removeAttribute("opacity"); });
+  });
+}
+
+function renderEffectiveness(ts){
+  if (!ts) return;
+  const cur = ts.current, sum = ts.summary;
+  const dirName = t => t === 1 ? "多头" : "空头";
+  const pct = (v, signed=true) => v==null ? "—" : (signed && v>0 ? "+" : "") + v.toFixed(2) + "%";
+  const dur = h => h==null ? "—" : (h >= 48 ? (h/24).toFixed(1)+" 天" : h.toFixed(1)+" 小时");
+
+  let tiles = "";
+  if (cur){
+    const sign = cur.trend === 1 ? 1 : -1;
+    const ok = cur.change_pct != null && cur.change_pct * sign > 0;
+    tiles += tile("当前周期", dirName(cur.trend),
+                  cur.trend === 1 ? "pos" : "neg",
+                  "持续 " + dur(cur.duration_h) + " · 始于 " + fmtTime(cur.start_ts) +
+                  " @ $" + Math.round(cur.start_price).toLocaleString());
+    const flat = !cur.change_pct;
+    tiles += tile("自翻转以来涨跌", pct(cur.change_pct), flat ? "" : (ok ? "pos" : "neg"),
+                  flat ? "持平" : (ok ? "与指标方向一致" : "与指标方向相悖"));
+    tiles += tile("期间最大顺向 / 逆向", pct(cur.max_fav) + " / " + pct(cur.max_adv), null, "按指标方向计");
+  }
+  tiles += tile("历史方向命中率", sum.hit_rate==null ? "统计中" : sum.hit_rate.toFixed(0) + "%",
+                sum.hit_rate >= 50 ? "pos" : (sum.hit_rate==null ? "" : "neg"),
+                "已结束周期 " + sum.periods + " 个" +
+                (sum.avg_dir_change==null ? "" : " · 平均顺向收益 " + pct(sum.avg_dir_change)));
+  $("eff-tiles").innerHTML = tiles;
+
+  const hourly = ts.hourly || [];
+  const sign = cur && cur.trend === 2 ? -1 : 1;
+  $("eff-empty").style.display = hourly.length ? "none" : "block";
+  $("effchart").style.display = hourly.length ? "" : "none";
+  $("eff-legend").style.display = hourly.length ? "" : "none";
+  if (hourly.length)
+    drawBars($("effchart"), hourly.map(h => ({ts: h.ts, v: h.change_pct})),
+             v => v.toFixed(2) + "%", d => (d.v * sign > 0),
+             "自翻转累计涨跌 ");
+
+  const hist = ts.history || [];
+  $("eff-hist-empty").style.display = hist.length ? "none" : "block";
+  $("eff-history").innerHTML = hist.map(p =>
+    `<tr><td class="time">${fmtTime(p.start_ts)}</td>` +
+    `<td><span class="dir ${p.trend===1?"bullish":"bearish"}"></span>${dirName(p.trend)}</td>` +
+    `<td>${dur(p.duration_h)}</td>` +
+    `<td style="color:${p.change_pct>=0?"var(--good-text)":"var(--critical)"}">${pct(p.change_pct)}</td>` +
+    `<td>${pct(p.max_fav)}</td><td>${pct(p.max_adv)}</td>` +
+    `<td>${p.hit ? "✅" : "❌"}</td></tr>`).join("");
+}
+
+function drawBars(svg, series, fmtV, isFav, tipLabel){
+  svg.innerHTML = "";
+  if (!series.length) return;
+  const W = Math.max(svg.clientWidth || 1020, series.length*14), H = +svg.getAttribute("height"),
+        padL = 56, padB = 6, padT = 8;
+  svg.setAttribute("width", W);
+  const plotW = W - padL - 8, plotH = H - padT - padB;
+  const maxAbs = Math.max(...series.map(d => Math.abs(d.v)), 0.05);
+  const zeroY = padT + plotH/2;
+  const bw = Math.max(3, plotW/series.length - 3);
+  const ns = "http://www.w3.org/2000/svg";
+  const mk = (tag, attrs) => { const el = document.createElementNS(ns, tag);
+    for (const k in attrs) el.setAttribute(k, attrs[k]); svg.appendChild(el); return el; };
+  mk("line",{x1:padL,x2:W-8,y1:zeroY,y2:zeroY,stroke:"var(--axis)","stroke-width":1});
+  [maxAbs,-maxAbs].forEach(v=>{
+    const y = zeroY - (v/maxAbs)*(plotH/2-4);
+    const t = mk("text",{x:padL-6,y:y+4,"text-anchor":"end",fill:"var(--muted)","font-size":10});
+    t.textContent = fmtV(v);
+  });
+  const tooltip = $("tooltip");
+  series.forEach((d,i)=>{
+    const h = Math.abs(d.v)/maxAbs*(plotH/2-4);
+    const x = padL + i*(plotW/series.length);
+    const y = d.v >= 0 ? zeroY - h : zeroY;
+    const bar = mk("rect",{x, y, width:bw, height:Math.max(h,1), rx:2,
+      fill: isFav(d) ? "var(--pos)" : "var(--neg)"});
+    const hit = mk("rect",{x:x-1, y:padT, width:bw+2, height:plotH, fill:"transparent"});
+    hit.addEventListener("mousemove", ev => {
+      tooltip.style.display = "block";
+      tooltip.style.left = (ev.clientX+12)+"px";
+      tooltip.style.top = (ev.clientY-10)+"px";
+      tooltip.innerHTML = `<b>${fmtTime(d.ts)}</b><br>${tipLabel}${fmtV(d.v)}`;
       bar.setAttribute("opacity","0.75");
     });
     hit.addEventListener("mouseleave", () => { tooltip.style.display="none"; bar.removeAttribute("opacity"); });

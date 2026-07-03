@@ -107,6 +107,10 @@ def main():
             snap, last_agg_id = collect_snapshot(last_agg_id)
             if snap:
                 db.kv_set("last_agg_id", last_agg_id)
+                # 多空指标有效性追踪：翻转结算 + 每小时价格变化快照
+                db.track_trend(snap["price_market"]["type"], snap["price"],
+                               snap["updated"])
+                snap["trend_stats"] = db.trend_stats(price_now=snap["price"])
                 new_signals = engine.evaluate(snap)
                 for sig in new_signals:
                     db.save_signal(sig)
