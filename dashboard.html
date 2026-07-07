@@ -75,6 +75,7 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:6px}
     <div>
       <div class="badge na" id="trend">加载中</div>
       <div class="hero-sub" style="margin-top:4px">主力行为指标 · 投票 <span id="score">—</span>/6</div>
+      <div class="hero-sub" id="pending" style="display:none;color:var(--warning)"></div>
     </div>
     <div class="updated">更新于 <span id="updated">—</span> · 30s 自动刷新</div>
   </header>
@@ -111,6 +112,16 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:6px}
       </table>
       <div class="empty" id="eff-hist-empty" style="display:none">暂无已结束的周期</div>
     </div>
+  </section>
+
+  <section class="card">
+    <h2>策略模拟盘（趋势确认多头买入 / 空头卖出 · 全仓无杠杆 · 不计手续费）</h2>
+    <div class="tiles" id="trade-tiles" style="margin-bottom:12px"></div>
+    <table>
+      <thead><tr><th style="width:110px">时间</th><th>操作</th><th>价格</th><th>本次收益</th><th>依据</th></tr></thead>
+      <tbody id="trade-history"></tbody>
+    </table>
+    <div class="empty" id="trade-empty" style="display:none">暂无交易，等待趋势确认…</div>
   </section>
 
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px" id="two-col">
@@ -168,6 +179,11 @@ function render(st){
   badge.textContent = pm.type === 1 ? "多头 · 上涨" : "空头 · 下跌";
   badge.className = "badge " + (pm.type === 1 ? "up" : "down");
   $("score").textContent = pm.score;
+  const pend = $("pending");
+  if (pm.pending != null){
+    pend.style.display = "";
+    pend.textContent = "⏳ " + (pm.pending === 1 ? "转多" : "转空") + "信号确认中";
+  } else pend.style.display = "none";
   $("votes").innerHTML = Object.entries(pm.votes).map(([k,v]) =>
     `<span class="vote ${v?"on":""}">${v?"✓":"✗"} ${VOTE_NAMES[k]||k}</span>`).join("");
 
@@ -210,6 +226,7 @@ function render(st){
 
   drawFlow(st.hourly_series || []);
   renderEffectiveness(st.trend_stats);
+  renderTrades(st.trade_stats, st.price);
 
   const sigs = st.signals || [];
   $("sig-empty").style.display = sigs.length ? "none" : "block";
@@ -303,6 +320,35 @@ function renderEffectiveness(ts){
     `<td style="color:${p.change_pct>=0?"var(--good-text)":"var(--critical)"}">${pct(p.change_pct)}</td>` +
     `<td>${pct(p.max_fav)}</td><td>${pct(p.max_adv)}</td>` +
     `<td>${p.hit ? "✅" : "❌"}</td></tr>`).join("");
+}
+
+function renderTrades(ts, price){
+  if (!ts) return;
+  const pct = v => v==null ? "—" : (v>0?"+":"") + v.toFixed(2) + "%";
+  const usd = v => "$" + Math.round(v).toLocaleString();
+  const pos = ts.position;
+  let tiles = "";
+  tiles += pos
+    ? tile("当前持仓", "多头", "pos", "入场 " + usd(pos.entry) + " · " + fmtTime(pos.ts))
+    : tile("当前持仓", "空仓", null, "等待趋势确认转多");
+  tiles += tile("持仓浮动收益", pct(ts.floating_pct),
+                ts.floating_pct==null ? "" : (ts.floating_pct>=0 ? "pos" : "neg"));
+  tiles += tile("累计收益（含浮动）", pct(ts.total_pct),
+                ts.total_pct>=0 ? "pos" : "neg",
+                "已实现 " + pct(ts.realized_pct) +
+                (ts.buy_hold_pct==null ? "" : " · 同期买入持有 " + pct(ts.buy_hold_pct)));
+  tiles += tile("已平仓交易", ts.closed_n + " 笔",
+                null, ts.win_rate==null ? "" : "胜率 " + ts.win_rate.toFixed(0) + "%");
+  $("trade-tiles").innerHTML = tiles;
+
+  const rows = ts.trades || [];
+  $("trade-empty").style.display = rows.length ? "none" : "block";
+  $("trade-history").innerHTML = rows.map(t =>
+    `<tr><td class="time">${fmtTime(t.ts)}</td>` +
+    `<td><span class="dir ${t.side==="BUY"?"bullish":"bearish"}"></span>${t.side==="BUY"?"买入":"卖出"}</td>` +
+    `<td>${usd(t.price)}</td>` +
+    `<td style="color:${t.pnl_pct==null?"inherit":(t.pnl_pct>=0?"var(--good-text)":"var(--critical)")}">${pct(t.pnl_pct)}</td>` +
+    `<td class="sig-body">${t.reason||""}</td></tr>`).join("");
 }
 
 function drawBars(svg, series, fmtV, isFav, tipLabel){

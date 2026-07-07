@@ -131,6 +131,7 @@ def main():
                     telegram_sender.send_signal(sig)
                     log.info("信号: [%s] %s", sig["name"], sig["title"])
                 snap["signals"] = db.recent_signals()
+                snap["trade_stats"] = db.trade_stats(price_now=snap["price"])
                 # 精简不需要暴露的原始序列
                 snap.pop("hourly_netflows", None)
                 snap.pop("hourly_netflows_total", None)

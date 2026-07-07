@@ -33,6 +33,7 @@ class SignalEngine:
         self.cooldowns = db.kv_get("cooldowns", {})
         self.tracking = db.kv_get("tracking", None)   # AI 追踪状态
         self.last_trend = db.kv_get("last_trend", None)
+        self.position = db.kv_get("position", None)   # 策略模拟仓位
 
     # ---------- 工具 ----------
     def _cooled(self, key):
@@ -57,6 +58,7 @@ class SignalEngine:
         base = f"现报 ${price:,.0f}，24H{'涨' if chg24 >= 0 else '跌'}幅 {abs(chg24):.2f}%"
 
         signals += self._trend_flip(snap, base)
+        signals += self._trade(snap, base)
         signals += self._fomo(snap, base)
         signals += self._funds_movement(snap, base)
         signals += self._alpha(snap, base)
@@ -92,6 +94,33 @@ class SignalEngine:
         return [self._sig("TREND", "主力行为指标", DOWN,
                           "BTC 主力行为指标转为【下跌】",
                           f"多维主力行为投票仅 {pm['score']}/6 看多，{base}，注意市场风险。{review}")]
+
+    def _trade(self, snap, base):
+        """交易信号：仓位与确认趋势同步——多头买入持有，空头卖出离场。
+        每轮对账而非只在翻转瞬间触发，重启/初始状态也能补齐仓位。"""
+        trend = snap["price_market"]["type"]
+        price = snap["price"]
+        now = int(time.time())
+        if trend == 1 and not self.position:
+            self.position = {"entry": price, "ts": now}
+            db.kv_set("position", self.position)
+            db.record_trade(now, "BUY", price, "趋势确认转多")
+            return [self._sig(
+                "TRADE", "交易信号", UP,
+                f"【买入】BTC @ ${price:,.0f}",
+                f"主力行为指标确认多头，按策略买入。{base}。")]
+        if trend == 2 and self.position:
+            entry = self.position["entry"]
+            pnl = (price - entry) / entry * 100
+            db.record_trade(now, "SELL", price, "趋势确认转空", pnl)
+            self.position = None
+            db.kv_set("position", None)
+            return [self._sig(
+                "TRADE", "交易信号", DOWN,
+                f"【卖出】BTC @ ${price:,.0f}，本次收益 {pnl:+.2f}%",
+                f"主力行为指标确认空头，按策略卖出离场。"
+                f"入场 ${entry:,.0f}，出场 ${price:,.0f}，收益 {pnl:+.2f}%。{base}。")]
+        return []
 
     def _fomo(self, snap, base):
         """113 FOMO：量价同时达到阈值；112 FOMO加剧：过热止盈预警。"""

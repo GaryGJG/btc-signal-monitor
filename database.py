@@ -29,6 +29,9 @@ def init():
     _conn.execute("""CREATE TABLE IF NOT EXISTS trend_hourly (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         period_id INTEGER, ts INTEGER, price REAL, change_pct REAL)""")
+    _conn.execute("""CREATE TABLE IF NOT EXISTS trades (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts INTEGER, side TEXT, price REAL, reason TEXT, pnl_pct REAL)""")
     _conn.commit()
 
 
@@ -179,6 +182,49 @@ def trend_stats(price_now=None, history_n=10):
             "hit_rate": sum(hits) / len(hits) * 100 if hits else None,
             "avg_dir_change": sum(dir_changes) / len(dir_changes) if dir_changes else None,
         },
+    }
+
+
+# ---------- 策略模拟盘（多头买入 / 空头卖出） ----------
+
+def record_trade(ts, side, price, reason, pnl_pct=None):
+    with _lock:
+        _conn.execute(
+            "INSERT INTO trades (ts,side,price,reason,pnl_pct) VALUES (?,?,?,?,?)",
+            (ts, side, price, reason, pnl_pct))
+        _conn.commit()
+
+
+def trade_stats(price_now=None, limit=30):
+    """持仓、已实现/浮动收益、胜率与买入持有对照，供仪表盘展示。"""
+    with _lock:
+        recent = _conn.execute(
+            "SELECT ts,side,price,reason,pnl_pct FROM trades "
+            "ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        pnls = [r[0] for r in _conn.execute(
+            "SELECT pnl_pct FROM trades WHERE side='SELL' AND pnl_pct IS NOT NULL")]
+        first = _conn.execute(
+            "SELECT ts, price FROM trades ORDER BY id LIMIT 1").fetchone()
+
+    realized = 1.0
+    for p in pnls:
+        realized *= 1 + p / 100
+    pos = kv_get("position")
+    floating = (price_now - pos["entry"]) / pos["entry"] * 100 \
+        if pos and price_now else None
+    total = realized * (1 + floating / 100 if floating is not None else 1)
+    return {
+        "position": pos,
+        "floating_pct": floating,
+        "realized_pct": (realized - 1) * 100,
+        "total_pct": (total - 1) * 100,
+        "closed_n": len(pnls),
+        "win_rate": sum(1 for p in pnls if p > 0) / len(pnls) * 100 if pnls else None,
+        "buy_hold_pct": (price_now - first[1]) / first[1] * 100
+            if first and price_now else None,
+        "since_ts": first[0] if first else None,
+        "trades": [{"ts": r[0], "side": r[1], "price": r[2],
+                    "reason": r[3], "pnl_pct": r[4]} for r in recent],
     }
 
 
