@@ -48,6 +48,7 @@ def collect_snapshot(last_agg_id):
 
     price = spot[-1]["close"]
     hourly = indicators.rolling_hourly_netflows(spot)
+    fut_hourly = indicators.rolling_hourly_netflows(futures)
     top_ratios = collector.fetch_top_trader_ratio()
     fng = collector.fetch_fear_greed()
     account_ratio = collector.fetch_global_account_ratio()
@@ -67,6 +68,10 @@ def collect_snapshot(last_agg_id):
         "spot_netflow": indicators.netflow_windows(spot),
         "futures_netflow": indicators.netflow_windows(futures),
         "hourly_netflows": hourly,
+        # 现货+合约合并的小时净流序列，供资金异动 z-score 用（与被检验值同口径）
+        "hourly_netflows_total": [
+            s + f for s, f in zip(hourly[-min(len(hourly), len(fut_hourly)):],
+                                  fut_hourly[-min(len(hourly), len(fut_hourly)):])],
         "vol_stats": indicators.volume_stats_5m(spot),
         "whale": whale,
         "large_trade_usd": cfg.LARGE_TRADE_USD,
@@ -78,10 +83,19 @@ def collect_snapshot(last_agg_id):
         "oi_change_24h": oi_change,
         "dense_areas": indicators.dense_areas(collector.fetch_hourly_7d(), price),
     }
-    snap["price_market"] = indicators.price_market_type(snap)
+    # 主力行为指标：迟滞投票 + 翻转确认去抖，pm["type"] 为确认后的趋势
+    trend_state = db.kv_get("trend_state")
+    prev = trend_state["confirmed"] if trend_state else None
+    pm = indicators.price_market_type(snap, prev_type=prev)
+    trend_state = indicators.confirm_trend(pm["type"], trend_state,
+                                           snap["updated"], cfg.TREND_CONFIRM_MIN)
+    db.kv_set("trend_state", trend_state)
+    pm["raw_type"] = pm["type"]
+    pm["type"] = trend_state["confirmed"]
+    pm["pending"] = trend_state["pending"]
+    snap["price_market"] = pm
 
     # 仪表盘用：逐小时净流入序列（现货+合约，近 72 小时）
-    fut_hourly = indicators.rolling_hourly_netflows(futures)
     n = min(len(hourly), len(fut_hourly), 72)
     now_h = snap["updated"] // 3600 * 3600
     snap["hourly_series"] = [
@@ -119,6 +133,7 @@ def main():
                 snap["signals"] = db.recent_signals()
                 # 精简不需要暴露的原始序列
                 snap.pop("hourly_netflows", None)
+                snap.pop("hourly_netflows_total", None)
                 snap.pop("top_trader_ratios", None)
                 snap.pop("vol_stats", None)
                 web_server.update_state(snap)

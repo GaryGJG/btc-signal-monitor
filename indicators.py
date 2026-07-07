@@ -7,6 +7,8 @@
 """
 import statistics
 
+import settings as cfg
+
 
 def _sum_netflow(bars, n_bars):
     return sum(b["netflow"] for b in bars[-n_bars:]) if bars else 0.0
@@ -106,8 +108,10 @@ def sentiment(fng, account_ratio):
     }
 
 
-def price_market_type(snapshot):
-    """主力行为指标：六个多空分量投票，>=4 票看多 → 1（上涨），否则 2（下跌）。
+def price_market_type(snapshot, prev_type=None):
+    """主力行为指标：六个多空分量投票，带迟滞——
+    >= TREND_BULL_VOTES 票看多 → 1（上涨），<= TREND_BEAR_VOTES 票 → 2（下跌），
+    中间票数维持 prev_type，避免单票在边界反复切换造成高频翻转。
     分量与 ValueScan 的数据维度对应：现货/合约资金流、大单净流入、
     大户持仓比变化、价格相对主力成本、价格动量。"""
     votes = {}
@@ -122,4 +126,29 @@ def price_market_type(snapshot):
     votes["above_cost"] = bool(whale["cost"]) and snapshot["price"] > whale["cost"]
     votes["momentum"] = snapshot["price_change_4h"] > 0
     score = sum(votes.values())
-    return {"type": 1 if score >= 4 else 2, "score": score, "votes": votes}
+    if score >= cfg.TREND_BULL_VOTES:
+        t = 1
+    elif score <= cfg.TREND_BEAR_VOTES:
+        t = 2
+    else:
+        t = prev_type or (1 if score >= 4 else 2)
+    return {"type": t, "score": score, "votes": votes}
+
+
+def confirm_trend(raw_type, state, ts, confirm_min):
+    """趋势翻转去抖状态机：新方向须连续保持 confirm_min 分钟才确认翻转。
+    回测显示未去抖的翻转命中率仅 ~29%（大量 1-6 分钟周期），
+    30 分钟确认后命中率升至 ~63% 且信号量降到约 1/6。"""
+    if not state:
+        return {"confirmed": raw_type, "pending": None, "pending_ts": None}
+    if raw_type == state["confirmed"]:
+        state["pending"] = None
+        state["pending_ts"] = None
+    elif state["pending"] != raw_type:
+        state["pending"] = raw_type
+        state["pending_ts"] = ts
+    elif ts - state["pending_ts"] >= confirm_min * 60:
+        state["confirmed"] = raw_type
+        state["pending"] = None
+        state["pending_ts"] = None
+    return state

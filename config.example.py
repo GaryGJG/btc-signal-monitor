@@ -17,6 +17,11 @@ POLL_INTERVAL = 60           # 主循环周期（秒）
 LARGE_TRADE_USD = 200_000    # 大额交易阈值（美元）：aggTrades 按秒内同方向聚合后的订单额
 WHALE_COST_WINDOW_DAYS = 30  # 主力成本计算窗口
 
+# ==================== 主力行为指标（趋势）====================
+TREND_BULL_VOTES = 4         # 看多需 >= N 票（共 6 票）
+TREND_BEAR_VOTES = 2         # 看空需 <= N 票；3 票维持原判（迟滞区）
+TREND_CONFIRM_MIN = 45       # 翻转确认：新方向须持续 N 分钟才生效（去抖，回测 45 最优）
+
 # ==================== 信号阈值 ====================
 FOMO_VOLUME_MULT = 4.0       # 5 分钟成交额 >= N 倍均值
 FOMO_PRICE_CHANGE = 0.5      # 且 5 分钟涨跌幅 >= N%

@@ -67,7 +67,8 @@ class SignalEngine:
 
     # ---------- 各信号规则 ----------
     def _trend_flip(self, snap, base):
-        """主力行为指标翻转（priceMarketType 1↔2），BTC 大趋势多空判定。"""
+        """主力行为指标翻转（priceMarketType 1↔2），BTC 大趋势多空判定。
+        pm["type"] 已经过迟滞投票 + TREND_CONFIRM_MIN 分钟确认去抖。"""
         pm = snap["price_market"]
         if self.last_trend == pm["type"]:
             return []
@@ -118,18 +119,19 @@ class SignalEngine:
         return out
 
     def _funds_movement(self, snap, base):
-        """108 资金异动：1 小时净流入显著偏离历史分布。"""
-        hourly = snap["hourly_netflows"]
+        """108 资金异动：1 小时净流显著偏离历史分布，方向随资金流向（双向检测）。"""
+        hourly = snap.get("hourly_netflows_total") or snap["hourly_netflows"]
         if len(hourly) < 8 or not self._cooled("FUNDS_MOVEMENT"):
             return []
         total_1h = snap["spot_netflow"]["1h"] + snap["futures_netflow"]["1h"]
         z = indicators.zscore(hourly, total_1h)
-        if z >= cfg.NETFLOW_SIGMA:
+        if abs(z) >= cfg.NETFLOW_SIGMA:
             self._arm("FUNDS_MOVEMENT")
+            word = "流入" if total_1h > 0 else "流出"
             return [self._sig(
-                "108", "资金异动", UP,
+                "108", "资金异动", UP if total_1h > 0 else DOWN,
                 "BTC 24H内 现货+合约资金异动，请重点关注",
-                f"1 小时净流入 {_fmt_usd(total_1h)}（z={z:.1f}），出现大量资金异常流入，"
+                f"1 小时净{word} {_fmt_usd(total_1h)}（z={z:.1f}），出现大量资金异常{word}，"
                 f"{base}，请注意市场行情变化。")]
         return []
 
